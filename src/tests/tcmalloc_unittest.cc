@@ -1049,8 +1049,9 @@ static void TestSetNewMode() {
 
 static void TestErrno(void) {
   errno = 0;
-  void* ret = memalign(128, kTooBig);
+  void* ret = _aligned_malloc(128, kTooBig);
   EXPECT_EQ(NULL, ret);
+  _aligned_free(ret);
   EXPECT_EQ(ENOMEM, errno);
 
   errno = 0;
