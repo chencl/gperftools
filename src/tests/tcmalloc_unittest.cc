@@ -1048,11 +1048,13 @@ static void TestSetNewMode() {
 }
 
 static void TestErrno(void) {
+  void* ret;
+  if (kOSSupportsMemalign) {
   errno = 0;
-  void* ret = _aligned_malloc(128, kTooBig);
+    ret = Memalign(128, kTooBig);
   EXPECT_EQ(NULL, ret);
-  _aligned_free(ret);
   EXPECT_EQ(ENOMEM, errno);
+  }
 
   errno = 0;
   ret = malloc(kTooBig);

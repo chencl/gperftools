@@ -1,11 +1,8 @@
-// -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
-// Copyright (c) 2005, Google Inc.
-// All rights reserved.
-// 
+// -*- Mode: C; c-basic-offset: 2; indent-tabs-mode: nil -*-
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
-// 
+//
 //     * Redistributions of source code must retain the above copyright
 // notice, this list of conditions and the following disclaimer.
 //     * Redistributions in binary form must reproduce the above
@@ -15,7 +12,7 @@
 //     * Neither the name of Google Inc. nor the names of its
 // contributors may be used to endorse or promote products derived from
 // this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -27,35 +24,20 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#ifndef _RUN_BENCHMARK_H_
+#define _RUN_BENCHMARK_H_
+#include <stdint.h>
 
-// ---
-// Author: Paul Menage <opensource@google.com>
-
-//-------------------------------------------------------------------
-// Some wrappers for pthread functions so that we can be LD_PRELOADed
-// against non-pthreads apps.
-//-------------------------------------------------------------------
-
-#ifndef GOOGLE_MAYBE_THREADS_H_
-#define GOOGLE_MAYBE_THREADS_H_
-
-#ifdef HAVE_PTHREAD
-#include <pthread.h>
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-int perftools_pthread_key_create(pthread_key_t *key,
-                                 void (*destr_function) (void *));
-int perftools_pthread_key_delete(pthread_key_t key);
-void *perftools_pthread_getspecific(pthread_key_t key);
-int perftools_pthread_setspecific(pthread_key_t key, void *val);
-int perftools_pthread_once(pthread_once_t *ctl,
-                           void  (*init_routine) (void));
+typedef void (*bench_body)(long iterations, uintptr_t param);
 
-// Our wrapper for pthread_atfork. Does _nothing_ when there are no
-// threads. See static_vars.cc:SetupAtForkLocksHandler for only user
-// of this.
-void perftools_pthread_atfork(void (*before)(),
-                              void (*parent_after)(),
-                              void (*child_after)());
+void report_benchmark(const char *name, bench_body body, uintptr_t param);
 
-#endif  /* GOOGLE_MAYBE_THREADS_H_ */
+#ifdef __cplusplus
+} // extern "C"
+#endif
+
+#endif // _RUN_BENCHMARK_H_
