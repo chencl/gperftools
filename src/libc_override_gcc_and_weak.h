@@ -55,23 +55,23 @@
 # error libc_override_gcc_and_weak.h is for gcc distributions only.
 #endif
 
-#define ALIAS(tc_fn)   __attribute__ ((alias (#tc_fn)))
+#define ALIAS(tc_fn)   __attribute__ ((alias (#tc_fn), used))
 
 void* operator new(size_t size) throw (std::bad_alloc)
     ALIAS(tc_new);
-void operator delete(void* p) __THROW
+void operator delete(void* p) throw()
     ALIAS(tc_delete);
 void* operator new[](size_t size) throw (std::bad_alloc)
     ALIAS(tc_newarray);
-void operator delete[](void* p) __THROW
+void operator delete[](void* p) throw()
     ALIAS(tc_deletearray);
-void* operator new(size_t size, const std::nothrow_t& nt) __THROW
+void* operator new(size_t size, const std::nothrow_t& nt) throw()
     ALIAS(tc_new_nothrow);
-void* operator new[](size_t size, const std::nothrow_t& nt) __THROW
+void* operator new[](size_t size, const std::nothrow_t& nt) throw()
     ALIAS(tc_newarray_nothrow);
-void operator delete(void* p, const std::nothrow_t& nt) __THROW
+void operator delete(void* p, const std::nothrow_t& nt) throw()
     ALIAS(tc_delete_nothrow);
-void operator delete[](void* p, const std::nothrow_t& nt) __THROW
+void operator delete[](void* p, const std::nothrow_t& nt) throw()
     ALIAS(tc_deletearray_nothrow);
 
 #if defined(ENABLE_SIZED_DELETE)
@@ -126,6 +126,13 @@ void operator delete(void *p, size_t size) throw()
   __attribute__((ifunc("resolve_delete_sized")));
 void operator delete[](void *p, size_t size) throw()
   __attribute__((ifunc("resolve_deletearray_sized")));
+
+#else /* !ENABLE_SIZED_DELETE && !ENABLE_DYN_SIZED_DELETE */
+
+void operator delete(void *p, size_t size) throw()
+  ALIAS(tc_delete);
+void operator delete[](void *p, size_t size) throw()
+  ALIAS(tc_deletearray);
 
 #endif /* !ENABLE_SIZED_DELETE && !ENABLE_DYN_SIZED_DELETE */
 

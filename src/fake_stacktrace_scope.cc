@@ -1,5 +1,5 @@
 // -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
-// Copyright (c) 2011, Google Inc.
+// Copyright (c) 2014, gperftools Contributors
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -27,38 +27,13 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-// ---
-//
-// Author: Craig Silverstein
 
-// This tests the accounting done by tcmalloc.  When we allocate and
-// free a small buffer, the number of bytes used by the application
-// before the alloc+free should match the number of bytes used after.
-// However, the internal data structures used by tcmalloc will be
-// quite different -- new spans will have been allocated, etc.  This
-// is, thus, a simple test that we account properly for the internal
-// data structures, so that we report the actual application-used
-// bytes properly.
+#include "base/basictypes.h"
 
-#include "config_for_unittests.h"
-#include <stdlib.h>
-#include <stdio.h>
-#include <gperftools/malloc_extension.h>
-#include "base/logging.h"
-
-int main() {
-  // We don't do accounting right when using debugallocation.cc, so
-  // turn off the test then.  TODO(csilvers): get this working too.
-#ifdef NDEBUG
-  static const char kCurrent[] = "generic.current_allocated_bytes";
-
-  size_t before_bytes, after_bytes;
-  MallocExtension::instance()->GetNumericProperty(kCurrent, &before_bytes);
-  free(malloc(200));
-  MallocExtension::instance()->GetNumericProperty(kCurrent, &after_bytes);
-
-  CHECK_EQ(before_bytes, after_bytes);
-#endif
-  printf("PASS\n");
-  return 0;
+namespace tcmalloc {
+  ATTRIBUTE_WEAK bool EnterStacktraceScope(void) {
+    return true;
+  }
+  ATTRIBUTE_WEAK void LeaveStacktraceScope(void) {
+  }
 }

@@ -108,8 +108,12 @@ class ThreadCache {
   static ThreadCache* GetCacheWhichMustBePresent();
   static ThreadCache* CreateCacheIfNecessary();
   static void         BecomeIdle();
+  static void         BecomeTemporarilyIdle();
   static size_t       MinSizeForSlowPath();
   static void         SetMinSizeForSlowPath(size_t size);
+  static void         SetUseEmergencyMalloc();
+  static void         ResetUseEmergencyMalloc();
+  static bool         IsUseEmergencyMalloc();
 
   static bool IsFastPathAllowed() { return MinSizeForSlowPath() != 0; }
 
@@ -255,12 +259,6 @@ class ThreadCache {
   // Since we don't really use dlopen in google code -- and using dlopen
   // on a malloc replacement is asking for trouble in any case -- that's
   // a good tradeoff for us.
-#ifdef HAVE___ATTRIBUTE__
-#define ATTR_INITIAL_EXEC __attribute__ ((tls_model ("initial-exec")))
-#else
-#define ATTR_INITIAL_EXEC
-#endif
-
 #ifdef HAVE_TLS
   struct ThreadLocalData {
     ThreadCache* heap;
@@ -271,6 +269,9 @@ class ThreadCache {
     // and we can then proceed, knowing that global and thread-local tcmalloc
     // state is initialized.
     size_t min_size_for_slow_path;
+
+    bool use_emergency_malloc;
+    size_t old_min_size_for_slow_path;
   };
   static __thread ThreadLocalData threadlocal_data_ ATTR_INITIAL_EXEC;
 #endif
@@ -443,6 +444,30 @@ inline void ThreadCache::SetMinSizeForSlowPath(size_t size) {
   threadlocal_data_.min_size_for_slow_path = size;
 #endif
 }
+
+inline void ThreadCache::SetUseEmergencyMalloc() {
+#ifdef HAVE_TLS
+  threadlocal_data_.old_min_size_for_slow_path = threadlocal_data_.min_size_for_slow_path;
+  threadlocal_data_.min_size_for_slow_path = 0;
+  threadlocal_data_.use_emergency_malloc = true;
+#endif
+}
+
+inline void ThreadCache::ResetUseEmergencyMalloc() {
+#ifdef HAVE_TLS
+  threadlocal_data_.min_size_for_slow_path = threadlocal_data_.old_min_size_for_slow_path;
+  threadlocal_data_.use_emergency_malloc = false;
+#endif
+}
+
+inline bool ThreadCache::IsUseEmergencyMalloc() {
+#if defined(HAVE_TLS) && defined(ENABLE_EMERGENCY_MALLOC)
+  return UNLIKELY(threadlocal_data_.use_emergency_malloc);
+#else
+  return false;
+#endif
+}
+
 
 }  // namespace tcmalloc
 

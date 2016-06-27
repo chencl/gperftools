@@ -91,9 +91,6 @@
 #include <gperftools/tcmalloc.h>
 
 #include <errno.h>                      // for ENOMEM, EINVAL, errno
-#ifdef HAVE_SYS_CDEFS_H
-#include <sys/cdefs.h>                  // for __THROW
-#endif
 #if defined HAVE_STDINT_H
 #include <stdint.h>
 #elif defined HAVE_INTTYPES_H
@@ -143,6 +140,8 @@
 #define ALWAYS_INLINE inline
 #endif
 
+#include "maybe_emergency_malloc.h"
+
 #if (defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)) && !defined(WIN32_OVERRIDE_ALLOCATORS)
 # define WIN32_DO_PATCHING 1
 #endif
@@ -155,14 +154,6 @@ using STL_NAMESPACE::numeric_limits;
 using STL_NAMESPACE::vector;
 
 #include "libc_override.h"
-
-// __THROW is defined in glibc (via <sys/cdefs.h>).  It means,
-// counter-intuitively, "This function will never throw an exception."
-// It's an optional optimization tool, but we may need to use it to
-// match glibc prototypes.
-#ifndef __THROW    // I guess we're not on a glibc system
-# define __THROW   // __THROW is just an optimization, so ok to make it ""
-#endif
 
 using tcmalloc::AlignmentForSize;
 using tcmalloc::kLog;
@@ -212,55 +203,55 @@ DEFINE_int64(tcmalloc_large_alloc_report_threshold,
 // MallocHook::GetCallerStackTrace can function accurately.
 #ifndef _WIN32   // windows doesn't have attribute_section, so don't bother
 extern "C" {
-  void* tc_malloc(size_t size) __THROW
+  void* tc_malloc(size_t size) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
-  void tc_free(void* ptr) __THROW
+  void tc_free(void* ptr) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
-  void* tc_realloc(void* ptr, size_t size) __THROW
+  void* tc_realloc(void* ptr, size_t size) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
-  void* tc_calloc(size_t nmemb, size_t size) __THROW
+  void* tc_calloc(size_t nmemb, size_t size) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
-  void tc_cfree(void* ptr) __THROW
-      ATTRIBUTE_SECTION(google_malloc);
-
-  void* tc_memalign(size_t __alignment, size_t __size) __THROW
-      ATTRIBUTE_SECTION(google_malloc);
-  int tc_posix_memalign(void** ptr, size_t align, size_t size) __THROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void* tc_valloc(size_t __size) __THROW
-      ATTRIBUTE_SECTION(google_malloc);
-  void* tc_pvalloc(size_t __size) __THROW
+  void tc_cfree(void* ptr) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
 
-  void tc_malloc_stats(void) __THROW
+  void* tc_memalign(size_t __alignment, size_t __size) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
-  int tc_mallopt(int cmd, int value) __THROW
+  int tc_posix_memalign(void** ptr, size_t align, size_t size) PERFTOOLS_THROW
+      ATTRIBUTE_SECTION(google_malloc);
+  void* tc_valloc(size_t __size) PERFTOOLS_THROW
+      ATTRIBUTE_SECTION(google_malloc);
+  void* tc_pvalloc(size_t __size) PERFTOOLS_THROW
+      ATTRIBUTE_SECTION(google_malloc);
+
+  void tc_malloc_stats(void) PERFTOOLS_THROW
+      ATTRIBUTE_SECTION(google_malloc);
+  int tc_mallopt(int cmd, int value) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
 #ifdef HAVE_STRUCT_MALLINFO
-  struct mallinfo tc_mallinfo(void) __THROW
+  struct mallinfo tc_mallinfo(void) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
 #endif
 
   void* tc_new(size_t size)
       ATTRIBUTE_SECTION(google_malloc);
-  void tc_delete(void* p) __THROW
+  void tc_delete(void* p) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
   void* tc_newarray(size_t size)
       ATTRIBUTE_SECTION(google_malloc);
-  void tc_deletearray(void* p) __THROW
+  void tc_deletearray(void* p) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
 
   // And the nothrow variants of these:
-  void* tc_new_nothrow(size_t size, const std::nothrow_t&) __THROW
+  void* tc_new_nothrow(size_t size, const std::nothrow_t&) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
-  void* tc_newarray_nothrow(size_t size, const std::nothrow_t&) __THROW
+  void* tc_newarray_nothrow(size_t size, const std::nothrow_t&) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
   // Surprisingly, standard C++ library implementations use a
   // nothrow-delete internally.  See, eg:
   // http://www.dinkumware.com/manuals/?manual=compleat&page=new.html
-  void tc_delete_nothrow(void* ptr, const std::nothrow_t&) __THROW
+  void tc_delete_nothrow(void* ptr, const std::nothrow_t&) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
-  void tc_deletearray_nothrow(void* ptr, const std::nothrow_t&) __THROW
+  void tc_deletearray_nothrow(void* ptr, const std::nothrow_t&) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
 
   // Some non-standard extensions that we support.
@@ -269,7 +260,7 @@ extern "C" {
   //    OS X: malloc_size()
   //    glibc: malloc_usable_size()
   //    Windows: _msize()
-  size_t tc_malloc_size(void* p) __THROW
+  size_t tc_malloc_size(void* p) PERFTOOLS_THROW
       ATTRIBUTE_SECTION(google_malloc);
 }  // extern "C"
 #endif  // #ifndef _WIN32
@@ -285,6 +276,10 @@ static int tc_new_mode = 0;  // See tc_set_new_mode().
 // required) kind of exception handling for these routines.
 namespace {
 void InvalidFree(void* ptr) {
+  if (tcmalloc::IsEmergencyPtr(ptr)) {
+    tcmalloc::EmergencyFree(ptr);
+    return;
+  }
   Log(kCrash, __FILE__, __LINE__, "Attempt to free invalid pointer", ptr);
 }
 
@@ -627,6 +622,17 @@ class TCMallocImplementation : public MallocExtension {
 
   virtual void** ReadHeapGrowthStackTraces() {
     return DumpHeapGrowthStackTraces();
+  }
+
+  virtual size_t GetThreadCacheSize() {
+    ThreadCache* tc = ThreadCache::GetCacheIfPresent();
+    if (!tc)
+      return 0;
+    return tc->Size();
+  }
+
+  virtual void MarkThreadTemporarilyIdle() {
+    ThreadCache::BecomeTemporarilyIdle();
   }
 
   virtual void Ranges(void* arg, RangeFunction func) {
@@ -1148,8 +1154,13 @@ inline void* do_malloc_pages(ThreadCache* heap, size_t size) {
   bool report_large;
 
   Length num_pages = tcmalloc::pages(size);
-  size = num_pages << kPageShift;
 
+  // NOTE: we're passing original size here as opposed to rounded-up
+  // size as we do in do_malloc_small. The difference is small here
+  // (at most 4k out of at least 256k). And not rounding up saves us
+  // from possibility of overflow, which rounding up could produce.
+  //
+  // See https://github.com/gperftools/gperftools/issues/723
   if (heap->SampleAllocation(size)) {
     result = DoSampledAllocation(size);
 
@@ -1184,10 +1195,16 @@ ALWAYS_INLINE void* do_malloc_small(ThreadCache* heap, size_t size) {
 }
 
 ALWAYS_INLINE void* do_malloc(size_t size) {
-  if (ThreadCache::have_tls &&
-      LIKELY(size < ThreadCache::MinSizeForSlowPath())) {
-    return do_malloc_small(ThreadCache::GetCacheWhichMustBePresent(), size);
-  } else if (size <= kMaxSize) {
+  if (ThreadCache::have_tls) {
+    if (LIKELY(size < ThreadCache::MinSizeForSlowPath())) {
+      return do_malloc_small(ThreadCache::GetCacheWhichMustBePresent(), size);
+    }
+    if (UNLIKELY(ThreadCache::IsUseEmergencyMalloc())) {
+      return tcmalloc::EmergencyMalloc(size);
+    }
+  }
+
+  if (size <= kMaxSize) {
     return do_malloc_small(ThreadCache::GetCache(), size);
   } else {
     return do_malloc_pages(ThreadCache::GetCache(), size);
@@ -1553,7 +1570,7 @@ void TCMallocImplementation::MarkThreadBusy() {
 //-------------------------------------------------------------------
 
 extern "C" PERFTOOLS_DLL_DECL const char* tc_version(
-    int* major, int* minor, const char** patch) __THROW {
+    int* major, int* minor, const char** patch) PERFTOOLS_THROW {
   if (major) *major = TC_VERSION_MAJOR;
   if (minor) *minor = TC_VERSION_MINOR;
   if (patch) *patch = TC_VERSION_PATCH;
@@ -1565,7 +1582,7 @@ extern "C" PERFTOOLS_DLL_DECL const char* tc_version(
 // If flag is 1, calls to malloc will behave like calls to new,
 // and the std_new_handler will be invoked on failure.
 // Returns the previous mode.
-extern "C" PERFTOOLS_DLL_DECL int tc_set_new_mode(int flag) __THROW {
+extern "C" PERFTOOLS_DLL_DECL int tc_set_new_mode(int flag) PERFTOOLS_THROW {
   int old_mode = tc_new_mode;
   tc_new_mode = flag;
   return old_mode;
@@ -1573,23 +1590,27 @@ extern "C" PERFTOOLS_DLL_DECL int tc_set_new_mode(int flag) __THROW {
 
 #ifndef TCMALLOC_USING_DEBUGALLOCATION  // debugallocation.cc defines its own
 
+#if defined(__GNUC__) && defined(__ELF__) && !defined(TCMALLOC_NO_ALIASES)
+#define TC_ALIAS(name) __attribute__((alias(#name)))
+#endif
+
 // CAVEAT: The code structure below ensures that MallocHook methods are always
 //         called from the stack frame of the invoked allocation function.
 //         heap-checker.cc depends on this to start a stack trace from
 //         the call to the (de)allocation function.
 
-extern "C" PERFTOOLS_DLL_DECL void* tc_malloc(size_t size) __THROW {
+extern "C" PERFTOOLS_DLL_DECL void* tc_malloc(size_t size) PERFTOOLS_THROW {
   void* result = do_malloc_or_cpp_alloc(size);
   MallocHook::InvokeNewHook(result, size);
   return result;
 }
 
-extern "C" PERFTOOLS_DLL_DECL void tc_free(void* ptr) __THROW {
+extern "C" PERFTOOLS_DLL_DECL void tc_free(void* ptr) PERFTOOLS_THROW {
   MallocHook::InvokeDeleteHook(ptr);
   do_free(ptr);
 }
 
-extern "C" PERFTOOLS_DLL_DECL void tc_free_sized(void *ptr, size_t size) __THROW {
+extern "C" PERFTOOLS_DLL_DECL void tc_free_sized(void *ptr, size_t size) PERFTOOLS_THROW {
   if ((reinterpret_cast<uintptr_t>(ptr) & (kPageSize-1)) == 0) {
     tc_free(ptr);
     return;
@@ -1598,12 +1619,12 @@ extern "C" PERFTOOLS_DLL_DECL void tc_free_sized(void *ptr, size_t size) __THROW
   do_free_with_callback(ptr, &InvalidFree, true, size);
 }
 
-#if defined(__GNUC__) && defined(__ELF__)
+#ifdef TC_ALIAS
 
 extern "C" PERFTOOLS_DLL_DECL void tc_delete_sized(void *p, size_t size) throw()
-  __attribute__((alias("tc_free_sized")));
+  TC_ALIAS(tc_free_sized);
 extern "C" PERFTOOLS_DLL_DECL void tc_deletearray_sized(void *p, size_t size) throw()
-  __attribute__((alias("tc_free_sized")));
+  TC_ALIAS(tc_free_sized);
 
 #else
 
@@ -1617,19 +1638,27 @@ extern "C" PERFTOOLS_DLL_DECL void tc_deletearray_sized(void *p, size_t size) th
 #endif
 
 extern "C" PERFTOOLS_DLL_DECL void* tc_calloc(size_t n,
-                                              size_t elem_size) __THROW {
+                                              size_t elem_size) PERFTOOLS_THROW {
+  if (ThreadCache::IsUseEmergencyMalloc()) {
+    return tcmalloc::EmergencyCalloc(n, elem_size);
+  }
   void* result = do_calloc(n, elem_size);
   MallocHook::InvokeNewHook(result, n * elem_size);
   return result;
 }
 
-extern "C" PERFTOOLS_DLL_DECL void tc_cfree(void* ptr) __THROW {
+extern "C" PERFTOOLS_DLL_DECL void tc_cfree(void* ptr) PERFTOOLS_THROW
+#ifdef TC_ALIAS
+TC_ALIAS(tc_free);
+#else
+{
   MallocHook::InvokeDeleteHook(ptr);
   do_free(ptr);
 }
+#endif
 
 extern "C" PERFTOOLS_DLL_DECL void* tc_realloc(void* old_ptr,
-                                               size_t new_size) __THROW {
+                                               size_t new_size) PERFTOOLS_THROW {
   if (old_ptr == NULL) {
     void* result = do_malloc_or_cpp_alloc(new_size);
     MallocHook::InvokeNewHook(result, new_size);
@@ -1639,6 +1668,9 @@ extern "C" PERFTOOLS_DLL_DECL void* tc_realloc(void* old_ptr,
     MallocHook::InvokeDeleteHook(old_ptr);
     do_free(old_ptr);
     return NULL;
+  }
+  if (UNLIKELY(tcmalloc::IsEmergencyPtr(old_ptr))) {
+    return tcmalloc::EmergencyRealloc(old_ptr, new_size);
   }
   return do_realloc(old_ptr, new_size);
 }
@@ -1654,26 +1686,40 @@ extern "C" PERFTOOLS_DLL_DECL void* tc_new(size_t size) {
   return p;
 }
 
-extern "C" PERFTOOLS_DLL_DECL void* tc_new_nothrow(size_t size, const std::nothrow_t&) __THROW {
+extern "C" PERFTOOLS_DLL_DECL void* tc_new_nothrow(size_t size, const std::nothrow_t&) PERFTOOLS_THROW {
   void* p = cpp_alloc(size, true);
   MallocHook::InvokeNewHook(p, size);
   return p;
 }
 
-extern "C" PERFTOOLS_DLL_DECL void tc_delete(void* p) __THROW {
+extern "C" PERFTOOLS_DLL_DECL void tc_delete(void* p) PERFTOOLS_THROW
+#ifdef TC_ALIAS
+TC_ALIAS(tc_free);
+#else
+{
   MallocHook::InvokeDeleteHook(p);
   do_free(p);
 }
+#endif
 
 // Standard C++ library implementations define and use this
 // (via ::operator delete(ptr, nothrow)).
 // But it's really the same as normal delete, so we just do the same thing.
-extern "C" PERFTOOLS_DLL_DECL void tc_delete_nothrow(void* p, const std::nothrow_t&) __THROW {
+extern "C" PERFTOOLS_DLL_DECL void tc_delete_nothrow(void* p, const std::nothrow_t&) PERFTOOLS_THROW
+#ifdef TC_ALIAS
+TC_ALIAS(tc_free);
+#else
+{
   MallocHook::InvokeDeleteHook(p);
   do_free(p);
 }
+#endif
 
-extern "C" PERFTOOLS_DLL_DECL void* tc_newarray(size_t size) {
+extern "C" PERFTOOLS_DLL_DECL void* tc_newarray(size_t size)
+#ifdef TC_ALIAS
+TC_ALIAS(tc_new);
+#else
+{
   void* p = cpp_alloc(size, false);
   // We keep this next instruction out of cpp_alloc for a reason: when
   // it's in, and new just calls cpp_alloc, the optimizer may fold the
@@ -1683,33 +1729,49 @@ extern "C" PERFTOOLS_DLL_DECL void* tc_newarray(size_t size) {
   MallocHook::InvokeNewHook(p, size);
   return p;
 }
+#endif
 
 extern "C" PERFTOOLS_DLL_DECL void* tc_newarray_nothrow(size_t size, const std::nothrow_t&)
-    __THROW {
+    PERFTOOLS_THROW
+#ifdef TC_ALIAS
+TC_ALIAS(tc_new_nothrow);
+#else
+{
   void* p = cpp_alloc(size, true);
   MallocHook::InvokeNewHook(p, size);
   return p;
 }
+#endif
 
-extern "C" PERFTOOLS_DLL_DECL void tc_deletearray(void* p) __THROW {
+extern "C" PERFTOOLS_DLL_DECL void tc_deletearray(void* p) PERFTOOLS_THROW
+#ifdef TC_ALIAS
+TC_ALIAS(tc_free);
+#else
+{
   MallocHook::InvokeDeleteHook(p);
   do_free(p);
 }
+#endif
 
-extern "C" PERFTOOLS_DLL_DECL void tc_deletearray_nothrow(void* p, const std::nothrow_t&) __THROW {
+extern "C" PERFTOOLS_DLL_DECL void tc_deletearray_nothrow(void* p, const std::nothrow_t&) PERFTOOLS_THROW
+#ifdef TC_ALIAS
+TC_ALIAS(tc_free);
+#else
+{
   MallocHook::InvokeDeleteHook(p);
   do_free(p);
 }
+#endif
 
 extern "C" PERFTOOLS_DLL_DECL void* tc_memalign(size_t align,
-                                                size_t size) __THROW {
+                                                size_t size) PERFTOOLS_THROW {
   void* result = do_memalign_or_cpp_memalign(align, size);
   MallocHook::InvokeNewHook(result, size);
   return result;
 }
 
 extern "C" PERFTOOLS_DLL_DECL int tc_posix_memalign(
-    void** result_ptr, size_t align, size_t size) __THROW {
+    void** result_ptr, size_t align, size_t size) PERFTOOLS_THROW {
   if (((align % sizeof(void*)) != 0) ||
       ((align & (align - 1)) != 0) ||
       (align == 0)) {
@@ -1728,7 +1790,7 @@ extern "C" PERFTOOLS_DLL_DECL int tc_posix_memalign(
 
 static size_t pagesize = 0;
 
-extern "C" PERFTOOLS_DLL_DECL void* tc_valloc(size_t size) __THROW {
+extern "C" PERFTOOLS_DLL_DECL void* tc_valloc(size_t size) PERFTOOLS_THROW {
   // Allocate page-aligned object of length >= size bytes
   if (pagesize == 0) pagesize = getpagesize();
   void* result = do_memalign_or_cpp_memalign(pagesize, size);
@@ -1736,7 +1798,7 @@ extern "C" PERFTOOLS_DLL_DECL void* tc_valloc(size_t size) __THROW {
   return result;
 }
 
-extern "C" PERFTOOLS_DLL_DECL void* tc_pvalloc(size_t size) __THROW {
+extern "C" PERFTOOLS_DLL_DECL void* tc_pvalloc(size_t size) PERFTOOLS_THROW {
   // Round up size to a multiple of pagesize
   if (pagesize == 0) pagesize = getpagesize();
   if (size == 0) {     // pvalloc(0) should allocate one page, according to
@@ -1748,25 +1810,25 @@ extern "C" PERFTOOLS_DLL_DECL void* tc_pvalloc(size_t size) __THROW {
   return result;
 }
 
-extern "C" PERFTOOLS_DLL_DECL void tc_malloc_stats(void) __THROW {
+extern "C" PERFTOOLS_DLL_DECL void tc_malloc_stats(void) PERFTOOLS_THROW {
   do_malloc_stats();
 }
 
-extern "C" PERFTOOLS_DLL_DECL int tc_mallopt(int cmd, int value) __THROW {
+extern "C" PERFTOOLS_DLL_DECL int tc_mallopt(int cmd, int value) PERFTOOLS_THROW {
   return do_mallopt(cmd, value);
 }
 
 #ifdef HAVE_STRUCT_MALLINFO
-extern "C" PERFTOOLS_DLL_DECL struct mallinfo tc_mallinfo(void) __THROW {
+extern "C" PERFTOOLS_DLL_DECL struct mallinfo tc_mallinfo(void) PERFTOOLS_THROW {
   return do_mallinfo();
 }
 #endif
 
-extern "C" PERFTOOLS_DLL_DECL size_t tc_malloc_size(void* ptr) __THROW {
+extern "C" PERFTOOLS_DLL_DECL size_t tc_malloc_size(void* ptr) PERFTOOLS_THROW {
   return MallocExtension::instance()->GetAllocatedSize(ptr);
 }
 
-extern "C" PERFTOOLS_DLL_DECL void* tc_malloc_skip_new_handler(size_t size)  __THROW {
+extern "C" PERFTOOLS_DLL_DECL void* tc_malloc_skip_new_handler(size_t size)  PERFTOOLS_THROW {
   void* result = do_malloc(size);
   MallocHook::InvokeNewHook(result, size);
   return result;

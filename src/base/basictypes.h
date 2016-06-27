@@ -192,6 +192,12 @@ struct CompileAssert {
 # define ATTRIBUTE_UNUSED
 #endif
 
+#if defined(HAVE___ATTRIBUTE__) && defined(HAVE_TLS)
+#define ATTR_INITIAL_EXEC __attribute__ ((tls_model ("initial-exec")))
+#else
+#define ATTR_INITIAL_EXEC
+#endif
+
 #define COMPILE_ASSERT(expr, msg)                               \
   typedef CompileAssert<(bool(expr))> msg[bool(expr) ? 1 : -1] ATTRIBUTE_UNUSED
 
@@ -357,6 +363,8 @@ class AssignAttributeStartEnd {
 # elif (defined(__aarch64__))
 #   define CACHELINE_ALIGNED __attribute__((aligned(64)))
     // implementation specific, Cortex-A53 and 57 should have 64 bytes
+# elif (defined(__s390__))
+#   define CACHELINE_ALIGNED __attribute__((aligned(256)))
 # else
 #   error Could not determine cache line length - unknown architecture
 # endif

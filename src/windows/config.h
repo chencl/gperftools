@@ -15,6 +15,8 @@
 
 #ifndef GOOGLE_PERFTOOLS_WINDOWS_CONFIG_H_
 #define GOOGLE_PERFTOOLS_WINDOWS_CONFIG_H_
+/* used by tcmalloc.h */
+#define GPERFTOOLS_CONFIG_H_
 
 /* define this if you are linking tcmalloc statically and overriding the
  * default allocators.
@@ -228,13 +230,13 @@
 #define PACKAGE "gperftools"
 
 /* Define to the address where bug reports for this package should be sent. */
-#define PACKAGE_BUGREPORT "opensource@google.com"
+#define PACKAGE_BUGREPORT "gperftools@googlegroups.com"
 
 /* Define to the full name of this package. */
 #define PACKAGE_NAME "gperftools"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "gperftools 2.4"
+#define PACKAGE_STRING "gperftools 2.5"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "gperftools"
@@ -243,7 +245,7 @@
 #undef PACKAGE_URL
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.4"
+#define PACKAGE_VERSION "2.5"
 
 /* How to access the PC from a struct ucontext */
 #undef PC_FROM_UCONTEXT
